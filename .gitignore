@@ -1,1 +1,4 @@
 data/
+results/
+processed/full_preprocessed_dataset.pkl
+processed/~$top_terminals_and_customers.xlsx

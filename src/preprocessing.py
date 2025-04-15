@@ -1,9 +1,9 @@
 import os
 import pandas as pd
 import glob
-import pickle
-
+import sqlite3
 from sklearn.model_selection import train_test_split
+import pickle
 
 
 def load_and_merge_data(data_path='data'):
@@ -21,24 +21,36 @@ def add_time_features(df):
     return df
 
 
-def compute_terminal_fraud_rolling(df, window='7d'):
+def compute_terminal_fraud_rolling(df, window=7):
     df = df.sort_values('TX_DATETIME')
-    results = []
-    for terminal_id, group in df.groupby('TERMINAL_ID'):
-        group = group.set_index('TX_DATETIME').sort_index()
-        group['TERMINAL_FRAUD_7D'] = group['TX_FRAUD'].rolling(window).sum().shift(1).fillna(0)
-        results.append(group.reset_index())
-    return pd.concat(results, ignore_index=True)
+    df['TERMINAL_FRAUD_7D'] = (
+        df.groupby('TERMINAL_ID')['TX_FRAUD']
+        .rolling(window=window, min_periods=1)
+        .sum()
+        .shift(1)
+        .fillna(0)
+        .reset_index(level=0, drop=True)
+    )
+    return df
 
 
-def compute_customer_spend_rolling(df, window='7d'):
+def compute_customer_spend_rolling(df, window=7):
     df = df.sort_values('TX_DATETIME')
-    results = []
-    for customer_id, group in df.groupby('CUSTOMER_ID'):
-        group = group.set_index('TX_DATETIME').sort_index()
-        group['CUSTOMER_SPEND_7D'] = group['TX_AMOUNT'].rolling(window).mean().shift(1).fillna(0)
-        results.append(group.reset_index())
-    return pd.concat(results, ignore_index=True)
+    df['CUSTOMER_SPEND_7D'] = (
+        df.groupby('CUSTOMER_ID')['TX_AMOUNT']
+        .rolling(window=window, min_periods=1)
+        .sum()
+        .shift(1)
+        .fillna(0)
+        .reset_index(level=0, drop=True)
+    )
+    return df
+
+
+def save_to_database(df, db_path='processed/transactions.db'):
+    os.makedirs('processed', exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        df.to_sql('transactions', conn, if_exists='replace', index=False)
 
 
 def preprocess_data():
@@ -47,28 +59,29 @@ def preprocess_data():
     df = compute_terminal_fraud_rolling(df)
     df = compute_customer_spend_rolling(df)
 
-    # Final features
     features = [
         'TX_AMOUNT', 'TX_HOUR', 'TX_DAY', 'TX_WEEKDAY',
-        'TERMINAL_FRAUD_7D', 'CUSTOMER_SPEND_7D'
+        'TERMINAL_FRAUD_7D', 'CUSTOMER_SPEND_7D',
+        'CUSTOMER_ID', 'TERMINAL_ID', 'TX_DATETIME', 'TX_FRAUD'
     ]
-    target = 'TX_FRAUD'
-
+    df = df[features]
     df = df.sort_values('TX_DATETIME')
-    X = df[features]
-    y = df[target]
 
+    save_to_database(df)
+
+    # Train/test split for training the model
+    X = df.drop(columns='TX_FRAUD')
+    y = df['TX_FRAUD']
     split_idx = int(0.8 * len(df))
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
 
-    os.makedirs('processed', exist_ok=True)
     with open('processed/X_train.pkl', 'wb') as f: pickle.dump(X_train, f)
     with open('processed/X_test.pkl', 'wb') as f: pickle.dump(X_test, f)
     with open('processed/y_train.pkl', 'wb') as f: pickle.dump(y_train, f)
     with open('processed/y_test.pkl', 'wb') as f: pickle.dump(y_test, f)
 
-    print("✅ Preprocessing complete. Data saved to 'processed/' folder.")
+    print("✅ Preprocessing complete. Data saved to SQLite and 'processed/' folder.")
 
 
 if __name__ == '__main__':

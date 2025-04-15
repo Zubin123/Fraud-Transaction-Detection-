@@ -8,3 +8,5 @@ xgboost
 joblib 
 python-dotenv
 tqdm
+streamlit
+openpyxl
